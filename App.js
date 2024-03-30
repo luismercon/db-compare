@@ -1,39 +1,48 @@
 import React, { useState, useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { TodoSchema } from './schemas'
-import Realm from 'realm';
+import * as SQLite from 'expo-sqlite';
+
+// Open (and create if it doesn't exist) a SQLite database named app.db
+const db = SQLite.openDatabase('app.db');
 
 
 export default function App() {
 
   const [todos, setTodos] = useState([]);
-  const [realm, setRealm] = useState(null);
   const [ms, setMs] = useState(0);
   const qtt = 100000;
 
   useEffect(() => {
-    Realm.open({
-      schema: [TodoSchema],
-    }).then(realm => {
-      setRealm(realm);
-      const tasks = realm.objects('Todo');
-      console.log("Tasks lenght", tasks.length());
-      setTodos([...tasks]);
-      tasks.addListener(() => {
-        setTodos([...tasks]);
+    // Initialize db
+    db.transaction(tx => {
+      tx.executeSql(
+        `CREATE TABLE IF NOT EXISTS Todo (
+        _id INTEGER PRIMARY KEY NOT NULL,
+        text TEXT NOT NULL,
+        completed INTEGER NOT NULL
+      );`,
+        [],
+        () => console.log('Table created'),
+        (_, error) => console.log("Error creating table", error)
+      )
+    })
+
+    loadTodos();
+    return () => {
+      db._db.close(() => console.log('DB closed'), error => console.log('DB close error', error))
+    };
+
+  }, [])
+
+  const loadTodos = () => {
+    db.transaction(tx => {
+      tx.executeSql('SELECT * FROM Todo', [], (_, { rows: { _array } }) => {
+        setTodos(_array);
       });
     });
+  };
 
-    console.log('FIM')
-
-    return () => {
-      if (realm !== null) {
-        realm.close();
-      }
-    }
-
-  }, []);
 
   useEffect(() => {
     console.log('Finish transaction')
@@ -42,37 +51,36 @@ export default function App() {
 
   const insert100 = () => {
     let init = Date.now();
-    console.log(`inserting ${qtt} entries in DB`)
-    for (let i = 0; i < qtt; i++) {
-      realm.write(() => {
-        realm.create('Todo', {
-          _id: Date.now(),
-          text: i.toString(),
-          completed: false,
-        });
-      });
-    }
-    let end = Date.now();
-    setMs(end - init)
-  }
+    db.transaction(tx => {
+      for (let i = 0; i < qtt; i++) {
+        tx.executeSql('INSERT INTO Todo (text, completed) VALUES (?, ?)', [i.toString(), 0]);
+      }
+    }, null, () => {
+      let end = Date.now();
+      setMs(end - init);
+      loadTodos();
+    });
+  };
 
   const deleteAll = () => {
     let init = Date.now();
-    console.log('Deleting all entries in DB');
-
-    realm.write(() => {
-      realm.deleteAll(); // Delete all objects in a single transaction
+    db.transaction(tx => {
+      tx.executeSql('DELETE FROM Todo', []);
+    }, null, () => {
+      let end = Date.now();
+      setMs(end - init);
+      loadTodos();
     });
-
-    let end = Date.now();
-    setMs(end - init);
   };
 
-  const getCount = (className) => {
-    const results = realm.objects(className);
-    console.log('----------------')
-    console.log(results);
-    console.log('----------------')
+  const getCount = () => {
+    db.transaction(tx => {
+      tx.executeSql('SELECT COUNT(*) AS count FROM Todo', [], (_, { rows }) => {
+        console.log('----------------');
+        console.log('Count:', rows.item(0).count);
+        console.log('----------------');
+      });
+    });
   };
 
   return (
@@ -101,5 +109,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     alignItems: 'center',
     justifyContent: 'center',
+    fontSize: '40px'
   },
 });
